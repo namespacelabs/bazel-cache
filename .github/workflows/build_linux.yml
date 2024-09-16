@@ -12,7 +12,8 @@ jobs:
     steps:
       - name: checkout code
         uses: actions/checkout@v3
+      - run: nsc bazel cache setup --bazelrc=/tmp/bazel-cache.bazelrc
       - name: build amd64
         run: |
           set -eu
-          bazelisk build //:bazel-remote-linux-amd64
+          bazelisk --bazelrc=/tmp/bazel-cache.bazelrc build //:bazel-remote-linux-amd64
