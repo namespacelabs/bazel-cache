@@ -1,0 +1,22 @@
+name: create release binaries
+
+on:
+  push:
+    tags:
+      - v*
+    branches:
+      - master
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  linux:
+    name: create linux binaries
+    runs-on: namespace-profile-bazel-cache
+    steps:
+      - name: checkout code
+        uses: actions/checkout@v3
+      - name: build amd64
+        run: |
+          set -eu
+          bazelisk build //:bazel-remote-linux-amd64
