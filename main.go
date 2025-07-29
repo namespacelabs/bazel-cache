@@ -14,6 +14,7 @@ import (
 	"syscall"
 
 	auth "github.com/abbot/go-http-auth"
+	"github.com/buchgr/bazel-remote/v2/cache"
 
 	"github.com/buchgr/bazel-remote/v2/cache/disk"
 
@@ -41,7 +42,13 @@ import (
 // is set through linker options.
 var gitCommit string
 
+var injectedProx cache.Proxy
+
 func main() {
+	RunWithMaybeProxyOverride(nil)
+}
+
+func RunWithMaybeProxyOverride(injectedProxy cache.Proxy) {
 	app := cli.NewApp()
 
 	cli.AppHelpTemplate = flags.Template
@@ -49,6 +56,7 @@ func main() {
 	// Force the use of cli.HelpPrinterCustom.
 	app.ExtraInfo = func() map[string]string { return map[string]string{} }
 
+	injectedProx = injectedProxy
 	app.Flags = flags.GetCliFlags()
 	app.Action = run
 
@@ -76,6 +84,10 @@ func run(ctx *cli.Context) error {
 
 		_ = cli.ShowAppHelp(ctx)
 		os.Exit(1)
+	}
+
+	if injectedProx != nil {
+		c.ProxyBackend = injectedProx
 	}
 
 	maybeGitCommitMsg := ""
