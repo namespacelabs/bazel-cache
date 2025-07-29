@@ -42,9 +42,7 @@ import (
 // is set through linker options.
 var gitCommit string
 
-var injectedProx cache.Proxy
-
-func WithMaybeProxyOverride(injectedProxy cache.Proxy) {
+func WithMaybeProxyOverride(injector func(*config.Config) cache.Proxy) {
 	app := cli.NewApp()
 
 	cli.AppHelpTemplate = flags.Template
@@ -52,9 +50,9 @@ func WithMaybeProxyOverride(injectedProxy cache.Proxy) {
 	// Force the use of cli.HelpPrinterCustom.
 	app.ExtraInfo = func() map[string]string { return map[string]string{} }
 
-	injectedProx = injectedProxy
+	injector = injector
 	app.Flags = flags.GetCliFlags()
-	app.Action = run
+	app.Action = run(injector)
 
 	err := app.Run(os.Args)
 	if err != nil {
@@ -63,173 +61,175 @@ func WithMaybeProxyOverride(injectedProxy cache.Proxy) {
 }
 
 // copied from main.go so that we can reference it from outside the project
-func run(ctx *cli.Context) error {
-	c, err := config.Get(ctx)
-	if err != nil {
-		fmt.Fprintf(ctx.App.Writer, "%v\n\n", err)
-		_ = cli.ShowAppHelp(ctx)
-		return cli.Exit(err.Error(), 1)
-	}
-
-	if ctx.NArg() > 0 {
-		fmt.Fprintf(ctx.App.Writer,
-			"Error: bazel-remote does not take positional aguments\n")
-		for i := 0; i < ctx.NArg(); i++ {
-			fmt.Fprintf(ctx.App.Writer, "arg: %s\n", ctx.Args().Get(i))
-		}
-		fmt.Fprintf(ctx.App.Writer, "\n")
-
-		_ = cli.ShowAppHelp(ctx)
-		os.Exit(1)
-	}
-
-	if injectedProx != nil {
-		c.ProxyBackend = injectedProx
-	}
-
-	maybeGitCommitMsg := ""
-	if len(gitCommit) > 0 && gitCommit != "{STABLE_GIT_COMMIT}" {
-		maybeGitCommitMsg = fmt.Sprintf(" from git commit %s", gitCommit)
-	}
-	log.Printf("bazel-remote built with %s%s.",
-		runtime.Version(), maybeGitCommitMsg)
-
-	rlimit.Raise()
-
-	grpcSem := semaphore.NewWeighted(1)
-	var grpcServer *grpc.Server
-
-	httpSem := semaphore.NewWeighted(1)
-	var httpServer *http.Server
-
-	idleTimeoutChan := make(chan struct{}, 1)
-
-	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
-	go func() {
-		select {
-		case sig := <-sigChan:
-			log.Printf("Received signal: %s, attempting graceful shutdown", sig)
-		case <-idleTimeoutChan:
-			log.Println("Idle timeout reached, attempting graceful shutdown")
+func run(injector func(config2 *config.Config) cache.Proxy) func(ctx *cli.Context) error {
+	return func(ctx *cli.Context) error {
+		c, err := config.Get(ctx)
+		if err != nil {
+			fmt.Fprintf(ctx.App.Writer, "%v\n\n", err)
+			_ = cli.ShowAppHelp(ctx)
+			return cli.Exit(err.Error(), 1)
 		}
 
-		go func() {
-			if !grpcSem.TryAcquire(1) {
-				if grpcServer != nil {
-					log.Println("Stopping gRPC server")
-					grpcServer.GracefulStop()
-					log.Println("gRPC server stopped")
-				}
+		if ctx.NArg() > 0 {
+			fmt.Fprintf(ctx.App.Writer,
+				"Error: bazel-remote does not take positional aguments\n")
+			for i := 0; i < ctx.NArg(); i++ {
+				fmt.Fprintf(ctx.App.Writer, "arg: %s\n", ctx.Args().Get(i))
 			}
-		}()
+			fmt.Fprintf(ctx.App.Writer, "\n")
 
+			_ = cli.ShowAppHelp(ctx)
+			os.Exit(1)
+		}
+
+		if injector != nil {
+			c.ProxyBackend = injector(c)
+		}
+
+		maybeGitCommitMsg := ""
+		if len(gitCommit) > 0 && gitCommit != "{STABLE_GIT_COMMIT}" {
+			maybeGitCommitMsg = fmt.Sprintf(" from git commit %s", gitCommit)
+		}
+		log.Printf("bazel-remote built with %s%s.",
+			runtime.Version(), maybeGitCommitMsg)
+
+		rlimit.Raise()
+
+		grpcSem := semaphore.NewWeighted(1)
+		var grpcServer *grpc.Server
+
+		httpSem := semaphore.NewWeighted(1)
+		var httpServer *http.Server
+
+		idleTimeoutChan := make(chan struct{}, 1)
+
+		sigChan := make(chan os.Signal, 1)
+		signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
 		go func() {
-			if !httpSem.TryAcquire(1) {
-				if httpServer != nil {
-					log.Println("Stopping HTTP server")
-					err := httpServer.Shutdown(context.Background())
-					if err != nil {
-						log.Println("Error occurred while stopping HTTP server:", err)
-					} else {
-						log.Println("HTTP server stopped")
+			select {
+			case sig := <-sigChan:
+				log.Printf("Received signal: %s, attempting graceful shutdown", sig)
+			case <-idleTimeoutChan:
+				log.Println("Idle timeout reached, attempting graceful shutdown")
+			}
+
+			go func() {
+				if !grpcSem.TryAcquire(1) {
+					if grpcServer != nil {
+						log.Println("Stopping gRPC server")
+						grpcServer.GracefulStop()
+						log.Println("gRPC server stopped")
 					}
 				}
-			}
+			}()
+
+			go func() {
+				if !httpSem.TryAcquire(1) {
+					if httpServer != nil {
+						log.Println("Stopping HTTP server")
+						err := httpServer.Shutdown(context.Background())
+						if err != nil {
+							log.Println("Error occurred while stopping HTTP server:", err)
+						} else {
+							log.Println("HTTP server stopped")
+						}
+					}
+				}
+			}()
 		}()
-	}()
 
-	log.Println("Storage mode:", c.StorageMode)
-	if c.StorageMode == "zstd" {
-		log.Println("Zstandard implementation:", c.ZstdImplementation)
-	}
-
-	opts := []disk.Option{
-		disk.WithStorageMode(c.StorageMode),
-		disk.WithZstdImplementation(c.ZstdImplementation),
-		disk.WithMaxBlobSize(c.MaxBlobSize),
-		disk.WithProxyMaxBlobSize(c.MaxProxyBlobSize),
-		disk.WithAccessLogger(c.AccessLogger),
-	}
-	if c.ProxyBackend != nil {
-		opts = append(opts, disk.WithProxyBackend(c.ProxyBackend))
-	}
-	if c.EnableEndpointMetrics {
-		opts = append(opts, disk.WithEndpointMetrics())
-	}
-
-	diskCache, err := disk.New(c.Dir, int64(c.MaxSize)*1024*1024*1024, opts...)
-	if err != nil {
-		log.Fatal(err)
-	}
-	diskCache.RegisterMetrics()
-
-	servers := new(errgroup.Group)
-
-	var htpasswdSecrets auth.SecretProvider
-
-	authMode := "disabled"
-	if c.HtpasswdFile != "" {
-		authMode = "basic"
-		htpasswdSecrets = auth.HtpasswdFileProvider(c.HtpasswdFile)
-	} else if c.TLSCaFile != "" {
-		authMode = "mTLS"
-	}
-	log.Println("Authentication:", authMode)
-
-	if authMode != "disabled" {
-		if c.AllowUnauthenticatedReads {
-			log.Println("Access mode: authentication required for writes, unauthenticated reads allowed")
-		} else {
-			log.Println("Access mode: authentication required")
+		log.Println("Storage mode:", c.StorageMode)
+		if c.StorageMode == "zstd" {
+			log.Println("Zstandard implementation:", c.ZstdImplementation)
 		}
-	}
 
-	var idleTimer *idle.Timer
-	if c.IdleTimeout > 0 {
-		idleTimer = idle.NewTimer(c.IdleTimeout, idleTimeoutChan)
-	}
+		opts := []disk.Option{
+			disk.WithStorageMode(c.StorageMode),
+			disk.WithZstdImplementation(c.ZstdImplementation),
+			disk.WithMaxBlobSize(c.MaxBlobSize),
+			disk.WithProxyMaxBlobSize(c.MaxProxyBlobSize),
+			disk.WithAccessLogger(c.AccessLogger),
+		}
+		if c.ProxyBackend != nil {
+			opts = append(opts, disk.WithProxyBackend(c.ProxyBackend))
+		}
+		if c.EnableEndpointMetrics {
+			opts = append(opts, disk.WithEndpointMetrics())
+		}
 
-	acKeyManglingStatus := "disabled"
-	if c.EnableACKeyInstanceMangling {
-		acKeyManglingStatus = "enabled"
-	}
-	log.Println("Mangling non-empty instance names with AC keys:", acKeyManglingStatus)
-
-	servers.Go(func() error {
-		err := startHttpServer(c, &httpServer, htpasswdSecrets, idleTimer, httpSem, diskCache)
+		diskCache, err := disk.New(c.Dir, int64(c.MaxSize)*1024*1024*1024, opts...)
 		if err != nil {
-			log.Fatal("HTTP server returned fatal error:", err)
+			log.Fatal(err)
 		}
-		return nil
-	})
+		diskCache.RegisterMetrics()
 
-	if c.GRPCAddress != "none" {
+		servers := new(errgroup.Group)
+
+		var htpasswdSecrets auth.SecretProvider
+
+		authMode := "disabled"
+		if c.HtpasswdFile != "" {
+			authMode = "basic"
+			htpasswdSecrets = auth.HtpasswdFileProvider(c.HtpasswdFile)
+		} else if c.TLSCaFile != "" {
+			authMode = "mTLS"
+		}
+		log.Println("Authentication:", authMode)
+
+		if authMode != "disabled" {
+			if c.AllowUnauthenticatedReads {
+				log.Println("Access mode: authentication required for writes, unauthenticated reads allowed")
+			} else {
+				log.Println("Access mode: authentication required")
+			}
+		}
+
+		var idleTimer *idle.Timer
+		if c.IdleTimeout > 0 {
+			idleTimer = idle.NewTimer(c.IdleTimeout, idleTimeoutChan)
+		}
+
+		acKeyManglingStatus := "disabled"
+		if c.EnableACKeyInstanceMangling {
+			acKeyManglingStatus = "enabled"
+		}
+		log.Println("Mangling non-empty instance names with AC keys:", acKeyManglingStatus)
+
 		servers.Go(func() error {
-			err := startGrpcServer(c, &grpcServer, htpasswdSecrets, idleTimer, grpcSem, diskCache)
+			err := startHttpServer(c, &httpServer, htpasswdSecrets, idleTimer, httpSem, diskCache)
 			if err != nil {
-				log.Fatal("gRPC server returned fatal error:", err)
+				log.Fatal("HTTP server returned fatal error:", err)
 			}
 			return nil
 		})
-	}
 
-	if c.ProfileAddress != "" {
-		go func() {
-			// Allow access to /debug/pprof/ URLs.
-			log.Printf("Starting HTTP server for profiling on address %s",
-				c.ProfileAddress)
-			log.Fatal(`Failed to listen on address: "`, c.ProfileAddress,
-				`": `, http.ListenAndServe(c.ProfileAddress, nil))
-		}()
-	}
+		if c.GRPCAddress != "none" {
+			servers.Go(func() error {
+				err := startGrpcServer(c, &grpcServer, htpasswdSecrets, idleTimer, grpcSem, diskCache)
+				if err != nil {
+					log.Fatal("gRPC server returned fatal error:", err)
+				}
+				return nil
+			})
+		}
 
-	if idleTimer != nil {
-		log.Printf("Starting idle timer with value %v", c.IdleTimeout)
-		idleTimer.Start()
-	}
+		if c.ProfileAddress != "" {
+			go func() {
+				// Allow access to /debug/pprof/ URLs.
+				log.Printf("Starting HTTP server for profiling on address %s",
+					c.ProfileAddress)
+				log.Fatal(`Failed to listen on address: "`, c.ProfileAddress,
+					`": `, http.ListenAndServe(c.ProfileAddress, nil))
+			}()
+		}
 
-	return servers.Wait()
+		if idleTimer != nil {
+			log.Printf("Starting idle timer with value %v", c.IdleTimeout)
+			idleTimer.Start()
+		}
+
+		return servers.Wait()
+	}
 }
 
 func startHttpServer(c *config.Config, httpServer **http.Server,
