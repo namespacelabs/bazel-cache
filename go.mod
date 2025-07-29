@@ -1,4 +1,4 @@
-module github.com/buchgr/bazel-remote/v2
+module namespacelabs.dev/bazel-cache/v2
 
 require (
 	cloud.google.com/go/longrunning v0.6.3
