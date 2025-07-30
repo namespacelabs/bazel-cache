@@ -42,17 +42,13 @@ import (
 // is set through linker options.
 var gitCommit string
 
-<<<<<<< HEAD
 // gitTags is another version stamp, with the set of tags for the current
 // commit joined by commas.
 var gitTags string
 
-var injectedProx cache.Proxy
+type Injector func(*config.Config) (cache.Proxy, server.LoggingHooks)
 
-func RunWithMaybeProxyOverride(injectedProxy cache.Proxy) {
-=======
-func WithMaybeProxyOverride(injector func(*config.Config) cache.Proxy) {
->>>>>>> 9a528ef (make the overwritten proxy configurable)
+func WithMaybeProxyOverride(injector Injector) {
 	app := cli.NewApp()
 
 	cli.AppHelpTemplate = flags.Template
@@ -70,70 +66,14 @@ func WithMaybeProxyOverride(injector func(*config.Config) cache.Proxy) {
 	}
 }
 
-<<<<<<< HEAD
-func run(ctx *cli.Context) error {
-	c, err := config.Get(ctx)
-	if err != nil {
-		fmt.Fprintf(ctx.App.Writer, "%v\n\n", err)
-		_ = cli.ShowAppHelp(ctx)
-		return cli.Exit(err.Error(), 1)
-	}
-
-	if ctx.NArg() > 0 {
-		fmt.Fprintf(ctx.App.Writer,
-			"Error: bazel-remote does not take positional aguments\n")
-		for i := 0; i < ctx.NArg(); i++ {
-			fmt.Fprintf(ctx.App.Writer, "arg: %s\n", ctx.Args().Get(i))
-		}
-		fmt.Fprintf(ctx.App.Writer, "\n")
-
-		_ = cli.ShowAppHelp(ctx)
-		os.Exit(1)
-	}
-
-	if injectedProx != nil {
-		c.ProxyBackend = injectedProx
-	}
-
-	maybeGitCommitMsg := ""
-	if len(gitCommit) > 0 && gitCommit != "{STABLE_GIT_COMMIT}" {
-		maybeGitCommitMsg = fmt.Sprintf(" from git commit %s", gitCommit)
-	}
-	maybeGitTagsMsg := ""
-	if len(gitTags) > 0 && gitTags != "{GIT_TAGS}" {
-		maybeGitTagsMsg = " " + gitTags
-	}
-	log.Printf("bazel-remote built with %s%s%s.",
-		runtime.Version(), maybeGitCommitMsg, maybeGitTagsMsg)
-
-	rlimit.Raise()
-
-	grpcSem := semaphore.NewWeighted(1)
-	var grpcServer *grpc.Server
-
-	httpSem := semaphore.NewWeighted(1)
-	var httpServer *http.Server
-
-	idleTimeoutChan := make(chan struct{}, 1)
-
-	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
-	go func() {
-		select {
-		case sig := <-sigChan:
-			log.Printf("Received signal: %s, attempting graceful shutdown", sig)
-		case <-idleTimeoutChan:
-			log.Println("Idle timeout reached, attempting graceful shutdown")
-=======
 // copied from main.go so that we can reference it from outside the project
-func run(injector func(config2 *config.Config) cache.Proxy) func(ctx *cli.Context) error {
+func run(injector Injector) func(ctx *cli.Context) error {
 	return func(ctx *cli.Context) error {
 		c, err := config.Get(ctx)
 		if err != nil {
 			fmt.Fprintf(ctx.App.Writer, "%v\n\n", err)
 			_ = cli.ShowAppHelp(ctx)
 			return cli.Exit(err.Error(), 1)
->>>>>>> 9a528ef (make the overwritten proxy configurable)
 		}
 
 		if ctx.NArg() > 0 {
@@ -149,15 +89,22 @@ func run(injector func(config2 *config.Config) cache.Proxy) func(ctx *cli.Contex
 		}
 
 		if injector != nil {
-			c.ProxyBackend = injector(c)
+			proxy, hooks := injector(c)
+
+			c.ProxyBackend = proxy
+			c.LoggingHooks = hooks
 		}
 
 		maybeGitCommitMsg := ""
 		if len(gitCommit) > 0 && gitCommit != "{STABLE_GIT_COMMIT}" {
 			maybeGitCommitMsg = fmt.Sprintf(" from git commit %s", gitCommit)
 		}
-		log.Printf("bazel-remote built with %s%s.",
-			runtime.Version(), maybeGitCommitMsg)
+		maybeGitTagsMsg := ""
+		if len(gitTags) > 0 && gitTags != "{GIT_TAGS}" {
+			maybeGitTagsMsg = " " + gitTags
+		}
+		log.Printf("bazel-remote built with %s%s%s.",
+			runtime.Version(), maybeGitCommitMsg, maybeGitTagsMsg)
 
 		rlimit.Raise()
 
@@ -204,7 +151,6 @@ func run(injector func(config2 *config.Config) cache.Proxy) func(ctx *cli.Contex
 			}()
 		}()
 
-<<<<<<< HEAD
 	log.Println("Storage mode:", c.StorageMode)
 	if c.StorageMode == "zstd" {
 		log.Println("Zstandard implementation:", c.ZstdImplementation)
@@ -249,11 +195,10 @@ func run(injector func(config2 *config.Config) cache.Proxy) func(ctx *cli.Contex
 			log.Println("Access mode: authentication required for writes, unauthenticated reads allowed")
 		} else {
 			log.Println("Access mode: authentication required")
-=======
+
 		log.Println("Storage mode:", c.StorageMode)
 		if c.StorageMode == "zstd" {
 			log.Println("Zstandard implementation:", c.ZstdImplementation)
->>>>>>> 9a528ef (make the overwritten proxy configurable)
 		}
 
 		opts := []disk.Option{
@@ -573,7 +518,7 @@ func startGrpcServer(c *config.Config, grpcServer **grpc.Server,
 		c.EnableACKeyInstanceMangling,
 		enableRemoteAssetAPI,
 		c.MaxBlobSize,
-		diskCache, c.AccessLogger, c.ErrorLogger)
+		diskCache, c.AccessLogger, c.ErrorLogger, c.LoggingHooks)
 }
 
 type authenticator interface {

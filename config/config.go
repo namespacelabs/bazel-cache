@@ -18,6 +18,7 @@ import (
 	"github.com/buchgr/bazel-remote/v2/cache"
 	"github.com/buchgr/bazel-remote/v2/cache/azblobproxy"
 	"github.com/buchgr/bazel-remote/v2/cache/s3proxy"
+	"github.com/buchgr/bazel-remote/v2/server"
 
 	"github.com/urfave/cli/v2"
 	yaml "gopkg.in/yaml.v3"
@@ -133,6 +134,7 @@ type Config struct {
 	TLSConfig    *tls.Config
 	AccessLogger *log.Logger
 	ErrorLogger  *log.Logger
+	LoggingHooks server.LoggingHooks
 }
 
 type YamlConfig struct {
