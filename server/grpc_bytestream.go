@@ -141,9 +141,11 @@ func (s *grpcServer) Read(req *bytestream.ReadRequest,
 
 	buf := make([]byte, bufSize)
 
+	var total int64
 	var chunkResp bytestream.ReadResponse
 	for {
 		n, err := rc.Read(buf)
+		total += int64(n)
 
 		if n > 0 {
 			if limitedSend {
@@ -165,8 +167,12 @@ func (s *grpcServer) Read(req *bytestream.ReadRequest,
 		}
 
 		if err == io.EOF {
-			s.accessLogger.Printf("GRPC BYTESTREAM READ COMPLETED %s",
-				req.ResourceName)
+			s.accessLogger.Printf("GRPC BYTESTREAM READ COMPLETED %s", req.ResourceName)
+
+			if s.loggingHooks.successfulRead != nil {
+				s.loggingHooks.successfulRead(s.accessLogger, req.ResourceName, total)
+			}
+
 			return nil
 		}
 

@@ -35,12 +35,17 @@ const (
 
 const grpcHealthServiceName = "/grpc.health.v1.Health/Check"
 
+type LoggingHooks struct {
+	successfulRead func(cache.Logger, string, int64)
+}
+
 type grpcServer struct {
 	cache        disk.Cache
 	accessLogger cache.Logger
 	errorLogger  cache.Logger
 	depsCheck    bool
 	mangleACKeys bool
+	loggingHooks LoggingHooks
 }
 
 var readOnlyMethods = map[string]struct{}{
@@ -61,26 +66,27 @@ func ListenAndServeGRPC(
 	validateACDeps bool,
 	mangleACKeys bool,
 	enableRemoteAssetAPI bool,
-	c disk.Cache, a cache.Logger, e cache.Logger) error {
+	c disk.Cache, a cache.Logger, e cache.Logger, hooks LoggingHooks) error {
 
 	listener, err := net.Listen(network, addr)
 	if err != nil {
 		return err
 	}
 
-	return ServeGRPC(listener, srv, validateACDeps, mangleACKeys, enableRemoteAssetAPI, c, a, e)
+	return ServeGRPC(listener, srv, validateACDeps, mangleACKeys, enableRemoteAssetAPI, c, a, e, hooks)
 }
 
 func ServeGRPC(l net.Listener, srv *grpc.Server,
 	validateACDepsCheck bool,
 	mangleACKeys bool,
 	enableRemoteAssetAPI bool,
-	c disk.Cache, a cache.Logger, e cache.Logger) error {
+	c disk.Cache, a cache.Logger, e cache.Logger, hooks LoggingHooks) error {
 
 	s := &grpcServer{
 		cache: c, accessLogger: a, errorLogger: e,
 		depsCheck:    validateACDepsCheck,
 		mangleACKeys: mangleACKeys,
+		loggingHooks: hooks,
 	}
 	pb.RegisterActionCacheServer(srv, s)
 	pb.RegisterCapabilitiesServer(srv, s)

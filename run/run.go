@@ -42,7 +42,9 @@ import (
 // is set through linker options.
 var gitCommit string
 
-func WithMaybeProxyOverride(injector func(*config.Config) cache.Proxy) {
+type Injector func(*config.Config) (cache.Proxy, server.LoggingHooks)
+
+func WithMaybeProxyOverride(injector Injector) {
 	app := cli.NewApp()
 
 	cli.AppHelpTemplate = flags.Template
@@ -61,7 +63,7 @@ func WithMaybeProxyOverride(injector func(*config.Config) cache.Proxy) {
 }
 
 // copied from main.go so that we can reference it from outside the project
-func run(injector func(config2 *config.Config) cache.Proxy) func(ctx *cli.Context) error {
+func run(injector Injector) func(ctx *cli.Context) error {
 	return func(ctx *cli.Context) error {
 		c, err := config.Get(ctx)
 		if err != nil {
@@ -83,7 +85,10 @@ func run(injector func(config2 *config.Config) cache.Proxy) func(ctx *cli.Contex
 		}
 
 		if injector != nil {
-			c.ProxyBackend = injector(c)
+			proxy, hooks := injector(c)
+
+			c.ProxyBackend = proxy
+			c.LoggingHooks = hooks
 		}
 
 		maybeGitCommitMsg := ""
@@ -459,7 +464,7 @@ func startGrpcServer(c *config.Config, grpcServer **grpc.Server,
 		validateAC,
 		c.EnableACKeyInstanceMangling,
 		enableRemoteAssetAPI,
-		diskCache, c.AccessLogger, c.ErrorLogger)
+		diskCache, c.AccessLogger, c.ErrorLogger, c.LoggingHooks)
 }
 
 type authenticator interface {
