@@ -588,6 +588,10 @@ func (s *grpcServer) Write(srv bytestream.ByteStream_WriteServer) error {
 	}
 
 	s.accessLogger.Printf("GRPC BYTESTREAM WRITE COMPLETED: %s", resourceName)
+	if s.loggingHooks.SuccessfulWrite != nil {
+		s.loggingHooks.SuccessfulWrite(s.accessLogger, resourceName, resp.CommittedSize)
+	}
+
 	return nil
 }
 

@@ -37,7 +37,8 @@ const (
 const grpcHealthServiceName = "/grpc.health.v1.Health/Check"
 
 type LoggingHooks struct {
-	SuccessfulRead func(cache.Logger, string, int64)
+	SuccessfulRead  func(cache.Logger, string, int64)
+	SuccessfulWrite func(cache.Logger, string, int64)
 }
 
 type grpcServer struct {
