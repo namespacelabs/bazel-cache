@@ -169,8 +169,8 @@ func (s *grpcServer) Read(req *bytestream.ReadRequest,
 		if err == io.EOF {
 			s.accessLogger.Printf("GRPC BYTESTREAM READ COMPLETED %s", req.ResourceName)
 
-			if s.loggingHooks.successfulRead != nil {
-				s.loggingHooks.successfulRead(s.accessLogger, req.ResourceName, total)
+			if s.loggingHooks.SuccessfulRead != nil {
+				s.loggingHooks.SuccessfulRead(s.accessLogger, req.ResourceName, total)
 			}
 
 			return nil

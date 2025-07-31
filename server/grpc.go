@@ -37,7 +37,7 @@ const (
 const grpcHealthServiceName = "/grpc.health.v1.Health/Check"
 
 type LoggingHooks struct {
-	successfulRead func(cache.Logger, string, int64)
+	SuccessfulRead func(cache.Logger, string, int64)
 }
 
 type grpcServer struct {
@@ -47,7 +47,7 @@ type grpcServer struct {
 	depsCheck           bool
 	mangleACKeys        bool
 	maxCasBlobSizeBytes int64
-	loggingHooks LoggingHooks
+	loggingHooks        LoggingHooks
 }
 
 var readOnlyMethods = map[string]struct{}{
@@ -87,16 +87,13 @@ func ServeGRPC(l net.Listener, srv *grpc.Server,
 	c disk.Cache, a cache.Logger, e cache.Logger, hooks LoggingHooks) error {
 
 	s := &grpcServer{
-		cache: c, accessLogger: a, errorLogger: e,
-		depsCheck:    validateACDepsCheck,
-		mangleACKeys: mangleACKeys,
 		cache:               c,
 		accessLogger:        a,
 		errorLogger:         e,
 		depsCheck:           validateACDepsCheck,
 		mangleACKeys:        mangleACKeys,
 		maxCasBlobSizeBytes: maxCasBlobSizeBytes,
-		loggingHooks: hooks,
+		loggingHooks:        hooks,
 	}
 	pb.RegisterActionCacheServer(srv, s)
 	pb.RegisterCapabilitiesServer(srv, s)
