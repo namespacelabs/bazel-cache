@@ -5,5 +5,5 @@ import (
 )
 
 func main() {
-	run.RunWithMaybeProxyOverride(nil)
+	run.WithMaybeProxyOverride(nil)
 }

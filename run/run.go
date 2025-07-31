@@ -14,28 +14,27 @@ import (
 
 	auth "github.com/abbot/go-http-auth"
 	"github.com/buchgr/bazel-remote/v2/cache"
-
-	"github.com/buchgr/bazel-remote/v2/cache/disk"
-
-	"github.com/buchgr/bazel-remote/v2/config"
 	"github.com/buchgr/bazel-remote/v2/ldap"
-	"github.com/buchgr/bazel-remote/v2/server"
-	"github.com/buchgr/bazel-remote/v2/utils/flags"
-	"github.com/buchgr/bazel-remote/v2/utils/idle"
-	"github.com/buchgr/bazel-remote/v2/utils/rlimit"
-
 	grpc_prometheus "github.com/grpc-ecosystem/go-grpc-prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	httpmetrics "github.com/slok/go-http-metrics/metrics/prometheus"
 	"github.com/slok/go-http-metrics/middleware"
 	middlewarestd "github.com/slok/go-http-metrics/middleware/std"
-	"github.com/urfave/cli/v2"
-
-	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
+
+	"github.com/buchgr/bazel-remote/v2/cache/disk"
+
+	"github.com/buchgr/bazel-remote/v2/config"
+	"github.com/buchgr/bazel-remote/v2/server"
+	"github.com/buchgr/bazel-remote/v2/utils/flags"
+	"github.com/buchgr/bazel-remote/v2/utils/idle"
+	"github.com/buchgr/bazel-remote/v2/utils/rlimit"
+
+	"github.com/urfave/cli/v2"
 
 	"golang.org/x/sync/errgroup"
 	"golang.org/x/sync/semaphore"
+	"google.golang.org/grpc"
 )
 
 // gitCommit is the version stamp for the server. The value of this var
@@ -56,7 +55,6 @@ func WithMaybeProxyOverride(injector Injector) {
 	// Force the use of cli.HelpPrinterCustom.
 	app.ExtraInfo = func() map[string]string { return map[string]string{} }
 
-	injector = injector
 	app.Flags = flags.GetCliFlags()
 	app.Action = run(injector)
 
@@ -151,51 +149,6 @@ func run(injector Injector) func(ctx *cli.Context) error {
 			}()
 		}()
 
-	log.Println("Storage mode:", c.StorageMode)
-	if c.StorageMode == "zstd" {
-		log.Println("Zstandard implementation:", c.ZstdImplementation)
-	}
-
-	opts := []disk.Option{
-		disk.WithStorageMode(c.StorageMode),
-		disk.WithZstdImplementation(c.ZstdImplementation),
-		disk.WithMaxBlobSize(c.MaxBlobSize),
-		disk.WithProxyMaxBlobSize(c.MaxProxyBlobSize),
-		disk.WithMaxSizeHardLimit(int64(c.MaxSizeHardLimit) * 1024 * 1024 * 1024),
-		disk.WithAccessLogger(c.AccessLogger),
-	}
-	if c.ProxyBackend != nil {
-		opts = append(opts, disk.WithProxyBackend(c.ProxyBackend))
-	}
-	if c.EnableEndpointMetrics {
-		opts = append(opts, disk.WithEndpointMetrics())
-	}
-
-	diskCache, err := disk.New(c.Dir, int64(c.MaxSize)*1024*1024*1024, opts...)
-	if err != nil {
-		log.Fatal(err)
-	}
-	diskCache.RegisterMetrics()
-
-	servers := new(errgroup.Group)
-
-	var htpasswdSecrets auth.SecretProvider
-
-	authMode := "disabled"
-	if c.HtpasswdFile != "" {
-		authMode = "basic"
-		htpasswdSecrets = auth.HtpasswdFileProvider(c.HtpasswdFile)
-	} else if c.TLSCaFile != "" {
-		authMode = "mTLS"
-	}
-	log.Println("Authentication:", authMode)
-
-	if authMode != "disabled" {
-		if c.AllowUnauthenticatedReads {
-			log.Println("Access mode: authentication required for writes, unauthenticated reads allowed")
-		} else {
-			log.Println("Access mode: authentication required")
-
 		log.Println("Storage mode:", c.StorageMode)
 		if c.StorageMode == "zstd" {
 			log.Println("Zstandard implementation:", c.ZstdImplementation)
@@ -206,6 +159,7 @@ func run(injector Injector) func(ctx *cli.Context) error {
 			disk.WithZstdImplementation(c.ZstdImplementation),
 			disk.WithMaxBlobSize(c.MaxBlobSize),
 			disk.WithProxyMaxBlobSize(c.MaxProxyBlobSize),
+			disk.WithMaxSizeHardLimit(int64(c.MaxSizeHardLimit) * 1024 * 1024 * 1024),
 			disk.WithAccessLogger(c.AccessLogger),
 		}
 		if c.ProxyBackend != nil {
